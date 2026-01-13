@@ -1,0 +1,27 @@
+INFO:     Started server process [1649250]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:51790 (Press CTRL+C to quit)
+
+╔══════════════════════════════════════════╗
+║          MRMD AI Server                  ║
+║     with Juice Level Support             ║
+╚══════════════════════════════════════════╝
+
+  URL:  http://0.0.0.0:51790/
+
+  Juice Levels:
+    0 = ⚡ Quick (Grok 4.1)
+    1 = ⚖️ Balanced (Sonnet 4.5)
+    2 = 🧠 Deep (Gemini 3 thinking)
+    3 = 🚀 Maximum (Opus 4.5 thinking)
+    4 = 🔥 Ultimate (Multi-model merger)
+
+  Press Ctrl+C to stop
+
+[AI Server] Configured default LM: groq/moonshotai/kimi-k2-instruct-0905
+INFO:     127.0.0.1:33314 - "GET /programs HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1649250]
