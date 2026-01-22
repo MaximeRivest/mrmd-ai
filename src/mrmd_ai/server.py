@@ -23,7 +23,7 @@ import json
 # Thread pool for running blocking DSPy calls
 _executor = ThreadPoolExecutor(max_workers=10)
 
-from .juice import JuiceLevel, JuicedProgram, get_lm, JUICE_MODELS
+from .juice import JuiceLevel, ReasoningLevel, JuicedProgram, get_lm, JUICE_MODELS, REASONING_DESCRIPTIONS
 from .modules import (
     # Finish
     FinishSentencePredict,
@@ -94,19 +94,19 @@ PROGRAMS = {
     "NotebookNamePredict": NotebookNamePredict,
 }
 
-# Cached program instances per juice level
-_program_cache: dict[tuple[str, int], JuicedProgram] = {}
+# Cached program instances per juice level and reasoning level
+_program_cache: dict[tuple[str, int, int | None], JuicedProgram] = {}
 
 
-def get_program(name: str, juice: int = 0) -> JuicedProgram:
-    """Get a JuicedProgram instance for the given program and juice level."""
-    cache_key = (name, juice)
+def get_program(name: str, juice: int = 0, reasoning: int | None = None) -> JuicedProgram:
+    """Get a JuicedProgram instance for the given program, juice level, and reasoning level."""
+    cache_key = (name, juice, reasoning)
     if cache_key not in _program_cache:
         if name not in PROGRAMS:
             raise ValueError(f"Unknown program: {name}")
         program_class = PROGRAMS[name]
         program = program_class()
-        _program_cache[cache_key] = JuicedProgram(program, juice=juice)
+        _program_cache[cache_key] = JuicedProgram(program, juice=juice, reasoning=reasoning)
     return _program_cache[cache_key]
 
 
@@ -153,12 +153,31 @@ async def list_programs():
 
 @app.get("/juice")
 async def get_juice_levels():
-    """Get available juice levels."""
-    from .juice import JUICE_DESCRIPTIONS
+    """Get available juice levels with their capabilities."""
+    from .juice import JUICE_DESCRIPTIONS, JUICE_MODELS, JuiceLevel
+    levels = []
+    for level, desc in JUICE_DESCRIPTIONS.items():
+        level_info = {
+            "level": level.value,
+            "description": desc,
+        }
+        # Add supports_reasoning for non-ULTIMATE levels
+        if level != JuiceLevel.ULTIMATE and level in JUICE_MODELS:
+            level_info["supports_reasoning"] = JUICE_MODELS[level].supports_reasoning
+        else:
+            # ULTIMATE level supports reasoning (all its sub-models do)
+            level_info["supports_reasoning"] = True
+        levels.append(level_info)
+    return {"levels": levels}
+
+
+@app.get("/reasoning")
+async def get_reasoning_levels():
+    """Get available reasoning levels."""
     return {
         "levels": [
             {"level": level.value, "description": desc}
-            for level, desc in JUICE_DESCRIPTIONS.items()
+            for level, desc in REASONING_DESCRIPTIONS.items()
         ]
     }
 
@@ -210,6 +229,16 @@ async def run_program(program_name: str, request: Request):
     except ValueError:
         juice_level = 0
 
+    # Get reasoning level from header (optional)
+    reasoning_header = request.headers.get("X-Reasoning-Level")
+    reasoning_level = None
+    if reasoning_header is not None:
+        try:
+            reasoning_level = int(reasoning_header)
+            reasoning_level = max(0, min(5, reasoning_level))  # Clamp to 0-5
+        except ValueError:
+            reasoning_level = None
+
     # Get request body
     try:
         params = await request.json()
@@ -218,14 +247,17 @@ async def run_program(program_name: str, request: Request):
 
     # Get program
     try:
-        juiced_program = get_program(program_name, juice_level)
+        juiced_program = get_program(program_name, juice_level, reasoning_level)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
     # Log the call and get model info
-    from .juice import JUICE_DESCRIPTIONS, JUICE_MODELS, ULTIMATE_MODELS, JuiceLevel
+    from .juice import JUICE_DESCRIPTIONS, JUICE_MODELS, ULTIMATE_MODELS, JuiceLevel, ReasoningLevel
     juice_desc = JUICE_DESCRIPTIONS.get(JuiceLevel(juice_level), f"Level {juice_level}")
-    print(f"[AI] {program_name} @ {juice_desc}", flush=True)
+    reasoning_desc = ""
+    if reasoning_level is not None:
+        reasoning_desc = f" | {REASONING_DESCRIPTIONS.get(ReasoningLevel(reasoning_level), f'Reasoning {reasoning_level}')}"
+    print(f"[AI] {program_name} @ {juice_desc}{reasoning_desc}", flush=True)
 
     # Get the model name for this juice level
     if juice_level == JuiceLevel.ULTIMATE:
@@ -245,6 +277,7 @@ async def run_program(program_name: str, request: Request):
         # Add model metadata to response
         response["_model"] = model_name
         response["_juice_level"] = juice_level
+        response["_reasoning_level"] = reasoning_level
         return response
     except Exception as e:
         import traceback
@@ -275,6 +308,16 @@ async def run_program_stream(program_name: str, request: Request):
     except ValueError:
         juice_level = 0
 
+    # Get reasoning level from header (optional)
+    reasoning_header = request.headers.get("X-Reasoning-Level")
+    reasoning_level = None
+    if reasoning_header is not None:
+        try:
+            reasoning_level = int(reasoning_header)
+            reasoning_level = max(0, min(5, reasoning_level))  # Clamp to 0-5
+        except ValueError:
+            reasoning_level = None
+
     # Get request body
     try:
         params = await request.json()
@@ -286,9 +329,12 @@ async def run_program_stream(program_name: str, request: Request):
         raise HTTPException(status_code=404, detail=f"Unknown program: {program_name}")
 
     # Get model info
-    from .juice import JUICE_DESCRIPTIONS, JUICE_MODELS, ULTIMATE_MODELS, JuiceLevel, JuicedProgram
+    from .juice import JUICE_DESCRIPTIONS, JUICE_MODELS, ULTIMATE_MODELS, JuiceLevel, ReasoningLevel, JuicedProgram
     juice_desc = JUICE_DESCRIPTIONS.get(JuiceLevel(juice_level), f"Level {juice_level}")
-    print(f"[AI Stream] {program_name} @ {juice_desc}", flush=True)
+    reasoning_desc = ""
+    if reasoning_level is not None:
+        reasoning_desc = f" | {REASONING_DESCRIPTIONS.get(ReasoningLevel(reasoning_level), f'Reasoning {reasoning_level}')}"
+    print(f"[AI Stream] {program_name} @ {juice_desc}{reasoning_desc}", flush=True)
 
     # Get model name(s) for display
     if juice_level == JuiceLevel.ULTIMATE:
@@ -318,14 +364,16 @@ async def run_program_stream(program_name: str, request: Request):
                 # Create program with progress callback
                 program_class = PROGRAMS[program_name]
                 program = program_class()
-                juiced = JuicedProgram(program, juice=juice_level, progress_callback=progress_callback)
+                juiced = JuicedProgram(program, juice=juice_level, reasoning=reasoning_level, progress_callback=progress_callback)
 
                 # Emit starting event
                 progress_callback("status", {
                     "step": "starting",
                     "model": model_name,
                     "juice_level": juice_level,
-                    "juice_name": juice_desc
+                    "juice_name": juice_desc,
+                    "reasoning_level": reasoning_level,
+                    "reasoning_name": reasoning_desc.strip(" |") if reasoning_desc else None,
                 })
 
                 # Run the program
@@ -357,6 +405,7 @@ async def run_program_stream(program_name: str, request: Request):
                         response = extract_result(result_holder["result"])
                         response["_model"] = model_name
                         response["_juice_level"] = juice_level
+                        response["_reasoning_level"] = reasoning_level
                         yield sse_event("result", response)
                     break
 
