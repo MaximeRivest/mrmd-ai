@@ -431,13 +431,19 @@ class JuicedProgram:
                 with dspy.context(lm=lm):
                     result = self.program(**kwargs)
 
-                # Emit model complete
+                # Extract response text from DSPy Prediction for streaming
+                response_data = {}
+                if hasattr(result, "_store") and result._store:
+                    response_data = dict(result._store)
+
+                # Emit model complete WITH the actual response
                 with status_lock:
                     models_status[model_name] = "complete"
                 self._emit("model_complete", {
                     "model": model_name,
                     "success": True,
-                    "models_status": dict(models_status)
+                    "models_status": dict(models_status),
+                    "response": response_data,  # Include actual response!
                 })
 
                 return {"model": model_name, "result": result, "error": None}
@@ -449,7 +455,8 @@ class JuicedProgram:
                     "model": model_name,
                     "success": False,
                     "error": str(e),
-                    "models_status": dict(models_status)
+                    "models_status": dict(models_status),
+                    "response": None,
                 })
                 return {"model": model_name, "result": None, "error": str(e)}
 
