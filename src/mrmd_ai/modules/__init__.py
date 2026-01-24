@@ -38,6 +38,12 @@ from .document import (
 from .notebook import (
     NotebookNamePredict,
 )
+from .edit import (
+    EditAtCursorPredict,
+    AddressCommentPredict,
+    AddressAllCommentsPredict,
+    AddressNearbyCommentPredict,
+)
 
 __all__ = [
     # Finish programs
@@ -71,4 +77,9 @@ __all__ = [
     "DocumentAnalysisPredict",
     # Notebook programs
     "NotebookNamePredict",
+    # Edit programs (Ctrl-K and comments)
+    "EditAtCursorPredict",
+    "AddressCommentPredict",
+    "AddressAllCommentsPredict",
+    "AddressNearbyCommentPredict",
 ]

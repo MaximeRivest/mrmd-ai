@@ -559,9 +559,25 @@ class JuicedProgram:
                 for model_name, values in field_values.items():
                     if isinstance(values, list):
                         for item in values:
-                            if item not in seen:
+                            # Get hashable key for deduplication
+                            # Pydantic models aren't hashable, so convert to JSON
+                            try:
+                                if hasattr(item, 'model_dump_json'):
+                                    # Pydantic v2 model
+                                    item_key = item.model_dump_json()
+                                elif hasattr(item, 'json'):
+                                    # Pydantic v1 model
+                                    item_key = item.json()
+                                else:
+                                    # Regular hashable item
+                                    item_key = item
+                            except TypeError:
+                                # Fallback: convert to string representation
+                                item_key = str(item)
+
+                            if item_key not in seen:
                                 combined.append(item)
-                                seen.add(item)
+                                seen.add(item_key)
                 merged[field_name] = combined
             else:
                 # For string/text fields, use AI synthesis

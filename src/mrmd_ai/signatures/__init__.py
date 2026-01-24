@@ -14,6 +14,14 @@ from .correct import (
     CorrectAndFinishLineSignature,
     CorrectAndFinishSectionSignature,
 )
+from .edit import (
+    Edit,
+    CommentInfo,
+    EditAtCursorSignature,
+    AddressCommentSignature,
+    AddressAllCommentsSignature,
+    AddressNearbyCommentSignature,
+)
 
 __all__ = [
     "FinishSentenceSignature",
@@ -24,4 +32,11 @@ __all__ = [
     "FixTranscriptionSignature",
     "CorrectAndFinishLineSignature",
     "CorrectAndFinishSectionSignature",
+    # Edit signatures
+    "Edit",
+    "CommentInfo",
+    "EditAtCursorSignature",
+    "AddressCommentSignature",
+    "AddressAllCommentsSignature",
+    "AddressNearbyCommentSignature",
 ]

@@ -56,6 +56,11 @@ from .modules import (
     DocumentAnalysisPredict,
     # Notebook
     NotebookNamePredict,
+    # Edit (Ctrl-K and comments)
+    EditAtCursorPredict,
+    AddressCommentPredict,
+    AddressAllCommentsPredict,
+    AddressNearbyCommentPredict,
 )
 
 
@@ -92,6 +97,11 @@ PROGRAMS = {
     "DocumentAnalysisPredict": DocumentAnalysisPredict,
     # Notebook
     "NotebookNamePredict": NotebookNamePredict,
+    # Edit (Ctrl-K and comments)
+    "EditAtCursorPredict": EditAtCursorPredict,
+    "AddressCommentPredict": AddressCommentPredict,
+    "AddressAllCommentsPredict": AddressAllCommentsPredict,
+    "AddressNearbyCommentPredict": AddressNearbyCommentPredict,
 }
 
 # Cached program instances per juice level and reasoning level
@@ -203,6 +213,7 @@ def extract_result(prediction: Any) -> dict:
             "reformatted_text", "text_to_replace", "replacement",
             "response", "summary", "analysis",  # Document-level fields
             "code",  # ProgramCodePredict output
+            "edits",  # EditAtCursor and AddressComment outputs
         ]
 
         for field in output_fields:
@@ -278,16 +289,34 @@ async def run_program(program_name: str, request: Request):
         response["_model"] = model_name
         response["_juice_level"] = juice_level
         response["_reasoning_level"] = reasoning_level
-        return response
+        # Serialize any Pydantic models to dicts for JSON compatibility
+        return serialize_for_json(response)
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def serialize_for_json(obj):
+    """Recursively convert Pydantic models and other objects to JSON-serializable form."""
+    if hasattr(obj, 'model_dump'):
+        # Pydantic v2 model
+        return obj.model_dump()
+    elif hasattr(obj, 'dict'):
+        # Pydantic v1 model
+        return obj.dict()
+    elif isinstance(obj, dict):
+        return {k: serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [serialize_for_json(item) for item in obj]
+    else:
+        return obj
+
+
 def sse_event(event: str, data: dict) -> str:
     """Format a Server-Sent Event."""
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    serialized = serialize_for_json(data)
+    return f"event: {event}\ndata: {json.dumps(serialized)}\n\n"
 
 
 @app.post("/{program_name}/stream")
