@@ -24,6 +24,7 @@ import json
 _executor = ThreadPoolExecutor(max_workers=10)
 
 from .juice import JuiceLevel, ReasoningLevel, JuicedProgram, get_lm, JUICE_MODELS, REASONING_DESCRIPTIONS
+from .custom_programs import custom_registry, register_custom_programs
 from .modules import (
     # Finish
     FinishSentencePredict,
@@ -105,16 +106,91 @@ PROGRAMS = {
 }
 
 # Cached program instances per juice level and reasoning level
+# NOTE: Cache is only used when no custom API keys are provided
 _program_cache: dict[tuple[str, int, int | None], JuicedProgram] = {}
 
 
-def get_program(name: str, juice: int = 0, reasoning: int | None = None) -> JuicedProgram:
-    """Get a JuicedProgram instance for the given program, juice level, and reasoning level."""
+# API key header names
+API_KEY_HEADERS = {
+    "anthropic": "X-Api-Key-Anthropic",
+    "openai": "X-Api-Key-Openai",
+    "groq": "X-Api-Key-Groq",
+    "gemini": "X-Api-Key-Gemini",
+    "openrouter": "X-Api-Key-Openrouter",
+}
+
+
+def extract_api_keys(request: Request) -> dict | None:
+    """Extract API keys from request headers.
+
+    Headers:
+        X-Api-Key-Anthropic: Anthropic API key
+        X-Api-Key-Openai: OpenAI API key
+        X-Api-Key-Groq: Groq API key
+        X-Api-Key-Gemini: Google Gemini API key
+        X-Api-Key-Openrouter: OpenRouter API key
+
+    Returns:
+        Dict of provider -> key if any keys are provided, None otherwise.
+    """
+    api_keys = {}
+    for provider, header in API_KEY_HEADERS.items():
+        key = request.headers.get(header)
+        if key:
+            api_keys[provider] = key
+
+    return api_keys if api_keys else None
+
+
+def get_program(
+    name: str,
+    juice: int = 0,
+    reasoning: int | None = None,
+    api_keys: dict | None = None,
+    model_override: str | None = None,
+) -> JuicedProgram:
+    """Get a JuicedProgram instance for the given program configuration.
+
+    Args:
+        name: Program name (can be built-in or custom)
+        juice: Juice level (0-4)
+        reasoning: Optional reasoning level (0-5)
+        api_keys: Optional dict of provider -> API key
+        model_override: Optional model to use instead of default
+
+    Returns:
+        Configured JuicedProgram instance.
+
+    Note:
+        Programs with custom API keys or model overrides are NOT cached,
+        since they need fresh instances with the provided configuration.
+        Custom programs are never cached.
+    """
+    # Check built-in programs first
+    program_class = PROGRAMS.get(name)
+
+    # If not found, check custom registry
+    if program_class is None:
+        program_class = custom_registry.get(name)
+
+    if program_class is None:
+        raise ValueError(f"Unknown program: {name}")
+
+    # Custom programs and those with custom config are never cached
+    is_custom = name not in PROGRAMS
+    if api_keys or model_override or is_custom:
+        program = program_class()
+        return JuicedProgram(
+            program,
+            juice=juice,
+            reasoning=reasoning,
+            api_keys=api_keys,
+            model_override=model_override,
+        )
+
+    # Use cache for standard built-in requests (no custom keys)
     cache_key = (name, juice, reasoning)
     if cache_key not in _program_cache:
-        if name not in PROGRAMS:
-            raise ValueError(f"Unknown program: {name}")
-        program_class = PROGRAMS[name]
         program = program_class()
         _program_cache[cache_key] = JuicedProgram(program, juice=juice, reasoning=reasoning)
     return _program_cache[cache_key]
@@ -250,6 +326,12 @@ async def run_program(program_name: str, request: Request):
         except ValueError:
             reasoning_level = None
 
+    # Extract API keys from headers (optional)
+    api_keys = extract_api_keys(request)
+
+    # Get model override from header (optional)
+    model_override = request.headers.get("X-Model-Override")
+
     # Get request body
     try:
         params = await request.json()
@@ -258,7 +340,13 @@ async def run_program(program_name: str, request: Request):
 
     # Get program
     try:
-        juiced_program = get_program(program_name, juice_level, reasoning_level)
+        juiced_program = get_program(
+            program_name,
+            juice_level,
+            reasoning_level,
+            api_keys=api_keys,
+            model_override=model_override,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -347,6 +435,12 @@ async def run_program_stream(program_name: str, request: Request):
         except ValueError:
             reasoning_level = None
 
+    # Extract API keys from headers (optional)
+    api_keys = extract_api_keys(request)
+
+    # Get model override from header (optional)
+    model_override = request.headers.get("X-Model-Override")
+
     # Get request body
     try:
         params = await request.json()
@@ -390,10 +484,17 @@ async def run_program_stream(program_name: str, request: Request):
         def run_with_progress():
             """Run the program in a thread, emitting progress events."""
             try:
-                # Create program with progress callback
+                # Create program with progress callback and optional API keys
                 program_class = PROGRAMS[program_name]
                 program = program_class()
-                juiced = JuicedProgram(program, juice=juice_level, reasoning=reasoning_level, progress_callback=progress_callback)
+                juiced = JuicedProgram(
+                    program,
+                    juice=juice_level,
+                    reasoning=reasoning_level,
+                    progress_callback=progress_callback,
+                    api_keys=api_keys,
+                    model_override=model_override,
+                )
 
                 # Emit starting event
                 progress_callback("status", {
@@ -466,6 +567,79 @@ async def run_program_stream(program_name: str, request: Request):
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         }
     )
+
+
+# =============================================================================
+# CUSTOM PROGRAMS API
+# =============================================================================
+
+class CustomProgramConfig(BaseModel):
+    """Configuration for a custom program."""
+    id: str  # Unique program ID (e.g., "Custom_cmd-123")
+    name: str
+    instructions: str
+    inputType: str = "selection"  # selection | cursor | fullDoc
+    outputType: str = "replace"  # replace | insert
+
+
+class RegisterCustomProgramsRequest(BaseModel):
+    """Request to register multiple custom programs."""
+    programs: list[CustomProgramConfig]
+
+
+@app.post("/api/custom-programs/register")
+async def register_custom_programs_endpoint(request: RegisterCustomProgramsRequest):
+    """Register custom programs from frontend configuration.
+
+    This endpoint is called when the app starts or when settings change.
+    It clears existing custom programs and registers the new ones.
+    """
+    # Clear existing custom programs
+    custom_registry.clear()
+
+    # Register new programs
+    registered = []
+    for prog in request.programs:
+        try:
+            custom_registry.register(
+                program_id=prog.id,
+                config={
+                    "name": prog.name,
+                    "instructions": prog.instructions,
+                    "inputType": prog.inputType,
+                    "outputType": prog.outputType,
+                }
+            )
+            registered.append(prog.id)
+            print(f"[Custom] Registered: {prog.name} ({prog.id})")
+        except Exception as e:
+            print(f"[Custom] Failed to register {prog.id}: {e}")
+
+    return {"registered": registered, "count": len(registered)}
+
+
+@app.get("/api/custom-programs")
+async def list_custom_programs():
+    """List all registered custom programs."""
+    programs = []
+    for program_id in custom_registry.list_programs():
+        config = custom_registry.get_config(program_id)
+        if config:
+            programs.append({
+                "id": program_id,
+                "name": config.get("name", program_id),
+                "inputType": config.get("inputType", "selection"),
+                "outputType": config.get("outputType", "replace"),
+            })
+    return {"programs": programs}
+
+
+@app.delete("/api/custom-programs/{program_id}")
+async def unregister_custom_program(program_id: str):
+    """Unregister a specific custom program."""
+    if custom_registry.unregister(program_id):
+        return {"success": True, "id": program_id}
+    raise HTTPException(status_code=404, detail=f"Program not found: {program_id}")
 
 
 def main():

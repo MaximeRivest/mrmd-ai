@@ -213,15 +213,73 @@ SYNTHESIZER_MODEL = ModelConfig(
 )
 
 
+def get_api_key_for_model(model: str, api_keys: dict | None) -> str | None:
+    """Get the appropriate API key for a model based on its provider.
+
+    Uses LiteLLM model naming convention: provider/model-name
+    Supports any provider that the user has configured in settings.
+
+    Args:
+        model: Model identifier (e.g., "anthropic/claude-sonnet-4-5")
+        api_keys: Dict of provider -> API key
+
+    Returns:
+        API key string or None if not found/provided.
+    """
+    if not api_keys:
+        return None
+
+    model_lower = model.lower()
+
+    # Extract provider from model name (LiteLLM format: provider/model-name)
+    if "/" in model:
+        provider = model.split("/")[0].lower()
+        # Check for direct provider match
+        if provider in api_keys and api_keys[provider]:
+            return api_keys[provider]
+
+    # Fallback: Check for known provider patterns in model name
+    # This handles cases like "claude-3-sonnet" without prefix
+    provider_patterns = {
+        "anthropic": ["anthropic/", "claude"],
+        "openai": ["openai/", "gpt-", "o1-", "o3-"],
+        "groq": ["groq/"],
+        "gemini": ["gemini/", "gemini-"],
+        "openrouter": ["openrouter/"],
+        "together_ai": ["together_ai/", "together/"],
+        "fireworks_ai": ["fireworks_ai/", "fireworks/"],
+        "mistral": ["mistral/"],
+        "cohere": ["cohere/"],
+        "deepseek": ["deepseek/"],
+        "ollama": ["ollama/"],
+        "azure": ["azure/"],
+        "bedrock": ["bedrock/"],
+        "vertex_ai": ["vertex_ai/"],
+    }
+
+    for provider, patterns in provider_patterns.items():
+        for pattern in patterns:
+            if pattern in model_lower:
+                if provider in api_keys and api_keys[provider]:
+                    return api_keys[provider]
+                break
+
+    return None
+
+
 def get_lm(
     juice: JuiceLevel | int = JuiceLevel.QUICK,
-    reasoning: ReasoningLevel | int | None = None
+    reasoning: ReasoningLevel | int | None = None,
+    api_keys: dict | None = None,
+    model_override: str | None = None,
 ) -> dspy.LM:
     """Get a dspy.LM configured for the specified juice and reasoning levels.
 
     Args:
         juice: Juice level (0-3). Level 4 (ULTIMATE) requires special handling.
         reasoning: Optional reasoning level (0-5). If None, uses juice level's default.
+        api_keys: Optional dict of provider -> API key. If provided, overrides env vars.
+        model_override: Optional model to use instead of the default for this juice level.
 
     Returns:
         Configured dspy.LM instance.
@@ -234,6 +292,15 @@ def get_lm(
 
     config = JUICE_MODELS[juice]
     kwargs = config.to_lm_kwargs()
+
+    # Apply model override if provided
+    if model_override:
+        kwargs["model"] = model_override
+
+    # Get API key for this model's provider
+    api_key = get_api_key_for_model(kwargs["model"], api_keys)
+    if api_key:
+        kwargs["api_key"] = api_key
 
     # Apply reasoning level overrides if specified AND model supports reasoning
     if reasoning is not None and config.supports_reasoning:
@@ -313,7 +380,9 @@ class JuicedProgram:
         program: dspy.Module,
         juice: JuiceLevel | int = JuiceLevel.QUICK,
         reasoning: ReasoningLevel | int | None = None,
-        progress_callback: Callable[[str, dict], None] | None = None
+        progress_callback: Callable[[str, dict], None] | None = None,
+        api_keys: dict | None = None,
+        model_override: str | None = None,
     ):
         """Initialize a juiced program.
 
@@ -326,11 +395,15 @@ class JuicedProgram:
                               - "status": General status update
                               - "model_start": A model is starting (ultimate mode)
                               - "model_complete": A model finished (ultimate mode)
+            api_keys: Optional dict of provider -> API key. Overrides env vars.
+            model_override: Optional model to use instead of the default for this juice level.
         """
         self.program = program
         self.juice = JuiceLevel(juice) if isinstance(juice, int) else juice
         self.reasoning = ReasoningLevel(reasoning) if isinstance(reasoning, int) else reasoning
         self.progress_callback = progress_callback
+        self.api_keys = api_keys
+        self.model_override = model_override
 
     def _emit(self, event_type: str, data: dict):
         """Emit a progress event if callback is set."""
@@ -347,7 +420,10 @@ class JuicedProgram:
     def _run_single(self, **kwargs) -> Any:
         """Run with a single model at the specified juice level."""
         config = JUICE_MODELS[self.juice]
-        model_name = config.model.split("/")[-1]
+
+        # Use model override if provided, otherwise use default for juice level
+        actual_model = self.model_override if self.model_override else config.model
+        model_name = actual_model.split("/")[-1]
 
         reasoning_desc = ""
         if self.reasoning is not None:
@@ -356,11 +432,11 @@ class JuicedProgram:
         self._emit("status", {
             "step": "calling_model",
             "model": model_name,
-            "model_full": config.model,
+            "model_full": actual_model,
             "reasoning_level": self.reasoning.value if self.reasoning else None,
         })
 
-        lm = get_lm(self.juice, self.reasoning)
+        lm = get_lm(self.juice, self.reasoning, api_keys=self.api_keys, model_override=self.model_override)
         with dspy.context(lm=lm):
             result = self.program(**kwargs)
 
@@ -415,6 +491,11 @@ class JuicedProgram:
                     # Other providers use reasoning_effort
                     if reasoning_config["reasoning_effort"] is not None:
                         lm_kwargs["reasoning_effort"] = reasoning_config["reasoning_effort"]
+
+            # Apply API key for this model's provider
+            api_key = get_api_key_for_model(config.model, self.api_keys)
+            if api_key:
+                lm_kwargs["api_key"] = api_key
 
             lm = dspy.LM(**lm_kwargs)
             model_name = config.model.split("/")[-1]
@@ -536,8 +617,12 @@ class JuicedProgram:
         # Create synthesized result
         merged = {}
 
-        # Configure synthesizer LM
-        synth_lm = dspy.LM(**SYNTHESIZER_MODEL.to_lm_kwargs())
+        # Configure synthesizer LM with API key if provided
+        synth_kwargs = SYNTHESIZER_MODEL.to_lm_kwargs()
+        api_key = get_api_key_for_model(SYNTHESIZER_MODEL.model, self.api_keys)
+        if api_key:
+            synth_kwargs["api_key"] = api_key
+        synth_lm = dspy.LM(**synth_kwargs)
 
         # Synthesize each output field
         for field_name, base_value in base_store.items():
