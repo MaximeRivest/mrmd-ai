@@ -79,6 +79,8 @@ class FinishCodeLineSignature(dspy.Signature):
     Do NOT repeat any code from code_before_cursor.
     Follow the coding style visible in the context.
     Only complete the current line - stop at the end of the line.
+    If language is JavaScript/JS: avoid static imports (`import x from ...`);
+    use dynamic imports (`await import(...)`) instead.
     """
 
     document_context: Optional[str] = dspy.InputField(
@@ -114,6 +116,8 @@ class FinishCodeSectionSignature(dspy.Signature):
     Do NOT repeat any code from code_before_cursor.
     Complete the logical unit (finish the function, close the class, etc.).
     Follow the coding style and conventions visible in the context.
+    If language is JavaScript/JS: avoid static imports (`import x from ...`);
+    use dynamic imports (`await import(...)`) instead.
     """
 
     document_context: Optional[str] = dspy.InputField(

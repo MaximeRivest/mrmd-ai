@@ -16,6 +16,7 @@ class DocumentCodeSignature(dspy.Signature):
     - For classes: Add a class docstring describing purpose and key attributes
     - For code sections: Add a comment block explaining what the code does
     - Follow the language's documentation conventions (e.g., Google style for Python)
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Keep documentation concise but informative
     - Output must be EXACTLY the `code` input with documentation added
     """
@@ -46,6 +47,7 @@ class CompleteCodeSignature(dspy.Signature):
     - Analyze what the code is trying to accomplish
     - Complete the implementation logically
     - Follow existing code style and patterns
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Only output the completion, not the original code
     """
 
@@ -79,6 +81,7 @@ class AddTypeHintsSignature(dspy.Signature):
     - Add type hints to variables where beneficial
     - Use appropriate types from typing module (List, Dict, Optional, etc.)
     - Infer types from usage and context
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Output must be EXACTLY the `code` input with type hints added - same lines, same structure
     """
 
@@ -112,6 +115,7 @@ class ImproveNamesSignature(dspy.Signature):
     - Follow language naming conventions (snake_case for Python, camelCase for JS, etc.)
     - Avoid single-letter names except for obvious cases (i, j for loops)
     - Make the code more readable through better naming
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Preserve the code's functionality exactly
     - Output must be EXACTLY the `code` input with names improved
     """
@@ -147,6 +151,7 @@ class ExplainCodeSignature(dspy.Signature):
     - Don't over-comment simple, self-explanatory code
     - Use clear, concise language
     - Place comments on the line before or on the same line as the code
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Output must be EXACTLY the `code` input with comments added
     """
 
@@ -180,6 +185,7 @@ class RefactorCodeSignature(dspy.Signature):
     - Remove redundancy and dead code
     - Improve readability
     - Apply best practices and design patterns where appropriate
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Preserve the exact functionality
     - Don't change the API/interface unless clearly beneficial
     - Output must be EXACTLY the `code` input refactored
@@ -215,6 +221,7 @@ class FormatCodeSignature(dspy.Signature):
     - Add proper line breaks and spacing
     - Align similar constructs (assignments, parameters, etc.)
     - Follow language-specific formatting conventions (PEP8 for Python, etc.)
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Preserve the exact functionality - only change whitespace and formatting
     - Output must be EXACTLY the `code` input formatted
     """
@@ -251,6 +258,7 @@ class ProgramCodeSignature(dspy.Signature):
     - Fill in implied details (variable declarations, imports, error handling)
     - Follow the conventions and patterns visible in document_context
     - Match the coding style of surrounding code in local_context
+    - If language is JavaScript/JS: avoid static imports (`import x from ...`); use dynamic imports (`await import(...)`)
     - Output must be syntactically correct, runnable code
     - Preserve any actual code fragments from the input, just clean them up
 
