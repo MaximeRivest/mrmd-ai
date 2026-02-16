@@ -1,2 +1,10 @@
 # MRMD editor state
 .mrmd/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
