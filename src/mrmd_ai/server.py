@@ -644,6 +644,11 @@ async def unregister_custom_program(program_id: str):
 
 def main():
     """Run the AI server."""
+    # Ensure UTF-8 output on Windows (default cp1252 can't handle Unicode box/emoji chars)
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     import argparse
     parser = argparse.ArgumentParser(description="MRMD AI Server")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
